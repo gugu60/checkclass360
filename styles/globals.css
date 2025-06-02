@@ -1,0 +1,83 @@
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Font globale */
+body {
+    font-family: 'Roboto', Arial, sans-serif;
+    line-height: 1.5;
+    color: #374151; /* Testo grigio scuro */
+}
+
+/* Stile comune per le tabelle */
+.table-style {
+    font-size: 12px; /* Dimensione del testo uniforme */
+    font-family: inherit; /* Usa il font globale */
+    color: inherit; /* Usa il colore globale */
+    border-collapse: collapse; /* Elimina spazi tra celle */
+}
+
+/* Header della tabella */
+.table-header {
+    display: flex;
+    align-items: center;
+    background-color: #d1d5db; /* Sfondo grigio chiaro */
+    font-weight: bold;
+    border-bottom: 2px solid #000; /* Bordo nero sotto */
+    padding: 0.125rem 0; /* Padding coerente */
+    font-size: 12px; /* Testo piccolo */
+    line-height: normal; /* Mantieni altezza originale */
+}
+
+.table-row:first-of-type {
+    border-bottom: none; /* Rimuove il bordo inferiore */
+}
+
+/* Classe per celle allineate a sinistra */
+.table-cell-left {
+    text-align: left !important;
+    justify-content: flex-start !important;
+    padding-left: 0.5rem;
+    display: flex !important;
+    align-items: center !important;
+}
+
+.table-row {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid #d1d5db; /* Separatore grigio tra righe */
+    font-size: 12px; /* Testo piccolo */
+    padding: 0; /* Nessuno spazio interno */
+    line-height: 1; /* Altezza minima adattata al testo */
+}
+
+/* Cella della tabella */
+.table-cell {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 0.25rem; /* Spaziatura compatta */
+    text-align: center; /* Allinea il testo al centro */
+}
+
+/* Cella della prima colonna */
+.table-cell:first-child {
+    text-align: left; /* Prima colonna allineata a sinistra */
+}
+
+/* Stile per troncamento del testo con puntini di sospensione */
+.table-cell-truncate {
+    display: inline-block !important;
+    max-width: 150px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    padding-right: 4px !important;
+}
+
+/* Stile per hover sulle righe */
+.table-row:hover {
+    background-color: #f9fafb; /* Sfondo grigio chiaro su hover */
+}

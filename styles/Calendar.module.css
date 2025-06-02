@@ -1,0 +1,28 @@
+.calendar {
+  border: 1px solid #e5e7eb !important;
+}
+
+.tile {
+  border: 1px solid #e5e7eb !important;
+}
+
+.day {
+  min-height: 80px;
+}
+
+.navigationButton {
+  border: 1px solid #e5e7eb !important;
+}
+
+.weekdays {
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.weekday {
+  padding: 0.5em;
+  border-right: 1px solid #e5e7eb;
+}
+
+.weekday:last-child {
+  border-right: none;
+} 
