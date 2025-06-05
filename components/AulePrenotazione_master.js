@@ -1,0 +1,797 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import dynamic from 'next/dynamic';
+import { createClient } from '@supabase/supabase-js';
+import 'react-calendar/dist/Calendar.css';
+
+const Calendar = dynamic(() => import('react-calendar'), { ssr: false });
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.NEXT_PUBLIC_SUPABASE_KEY
+);
+
+// Definire gli orari per tutte le aule
+const orari = [
+  '08:15', '09:15', '10:15', '11:15', 
+  '12:15', '13:15', '14:15', '15:15', 
+  '16:15', '17:15'
+];
+
+const RoomSummary = ({ roomName, bookings, onClose }) => {
+  const bookingsByDate = {};
+  bookings.forEach(booking => {
+    const date = new Date(booking.data).toLocaleDateString('it-IT', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+    if (!bookingsByDate[date]) bookingsByDate[date] = [];
+    bookingsByDate[date].push(booking);
+  });
+
+  return (
+    <div className="bg-white p-4 rounded-lg shadow-lg mt-4">
+      <div className="flex justify-between items-center mb-4">
+        <h3 className="text-lg font-semibold text-blue-700">Riepilogo {roomName}</h3>
+        <button
+          onClick={onClose}
+          className="text-gray-500 hover:text-gray-700"
+        >
+          ✕
+        </button>
+      </div>
+      <div className="space-y-4">
+        {Object.entries(bookingsByDate).map(([date, dateBookings]) => (
+          <div key={date} className="border-b pb-2">
+            <h4 className="font-medium text-blue-600 mb-2">{date}</h4>
+            <div className="space-y-1">
+              {dateBookings.map((booking, index) => (
+                <div key={index} className="flex justify-between items-center text-sm">
+                  <span className="text-gray-600">
+                    {booking.orario ? booking.orario.slice(0, 5) : `${booking.ora_inizio?.slice(0, 5)} - ${booking.ora_fine?.slice(0, 5)}`}
+                  </span>
+                  <span className="text-gray-800 font-medium">{booking.nome_utente || '—'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+const AulePrenotazione = ({ type, selectedDate, onDateChange, onRoomClick, selectedRoom }) => {
+  const [aule, setAule] = useState([]);
+  const [prenotazioni, setPrenotazioni] = useState([]);
+  const [prenotazioniPerAula, setPrenotazioniPerAula] = useState({});
+  const [selectedAula, setSelectedAula] = useState(null);
+  const [selectedTime, setSelectedTime] = useState('08:15');
+  const [userName, setUserName] = useState('');
+  const [loadingAule, setLoadingAule] = useState(true);
+  const [loadingPrenotazioni, setLoadingPrenotazioni] = useState(true);
+  const [selectedAulaView, setSelectedAulaView] = useState(1);
+  const [selectedRoomState, setSelectedRoomState] = useState(null);
+  const [roomBookings, setRoomBookings] = useState({});
+  
+  // Funzione refreshPrenotazioni definita prima del useEffect
+  const refreshPrenotazioni = useCallback(async (formattedDate) => {
+    console.log('=== INIZIO REFRESH ===');
+    console.log('Data per refresh:', formattedDate);
+    
+    try {
+      setLoadingPrenotazioni(true);
+      const { data, error } = await supabase
+        .from('prenotazioni')
+        .select('id, id_aula, data, orario, nome_utente, aule (nome)')
+        .eq('data', formattedDate)
+        .order('orario', { ascending: true });
+  
+      console.log('Dati recuperati:', data);
+      console.log('Eventuali errori:', error);
+  
+      if (error) throw error;
+  
+      // Aggiorna lo stato delle prenotazioni
+      setPrenotazioni(data || []);
+  
+      // Ricostruisci completamente prenotazioniPerAula
+      const updated = {};
+      aule.forEach(aula => {
+        updated[aula.id] = data?.filter(p => p.id_aula === aula.id) || [];
+      });
+  
+      console.log('Nuovo stato prenotazioniPerAula:', updated);
+      setPrenotazioniPerAula(updated);
+    } catch (error) {
+      console.error('Errore durante il refresh:', error);
+    } finally {
+      setLoadingPrenotazioni(false);
+      console.log('=== FINE REFRESH ===');
+    }
+  }, [aule]);
+
+  useEffect(() => {
+    const fetchAule = async () => {
+      setLoadingAule(true);
+      try {
+        const { data, error } = await supabase
+          .from('aule')
+          .select('*')
+          .order('nome');
+        if (error) throw error;
+        setAule(data);
+        if (data && data.length > 0) {
+          setSelectedAulaView(data[0].id);
+        }
+      } catch (error) {
+        console.error('Errore nel recupero delle aule:', error);
+      } finally {
+        setLoadingAule(false);
+      }
+    };
+    fetchAule();
+  }, []);
+
+  // Carica le prenotazioni quando cambia la data selezionata
+  useEffect(() => {
+    if (selectedDate) {
+      const formattedDate = selectedDate.toLocaleDateString('sv-SE');
+      refreshPrenotazioni(formattedDate);
+    }
+  }, [selectedDate, refreshPrenotazioni]);
+
+  const handlePrenotazione = async () => {
+    if (!selectedAula || !userName || !selectedTime) {
+      alert('Per favore, compila tutti i campi');
+      return;
+    }
+
+    const formattedDate = selectedDate.toLocaleDateString('sv-SE');
+
+    try {
+      // Verifica se esiste già una prenotazione per quell'aula e orario
+      const { data: existing, error: fetchError } = await supabase
+        .from('prenotazioni')
+        .select('*')
+        .eq('id_aula', selectedAula)
+        .eq('data', formattedDate)
+        .eq('orario', selectedTime);
+
+      if (fetchError) throw fetchError;
+      if (existing && existing.length > 0) {
+        alert(`L'aula è già prenotata per le ${selectedTime} da ${existing[0].nome_utente}`);
+        return;
+      }
+
+      // Inserisci la nuova prenotazione
+      const { error: insertError } = await supabase
+        .from('prenotazioni')
+        .insert([{
+          id_aula: selectedAula,
+          data: formattedDate,
+          orario: selectedTime,
+          nome_utente: userName
+        }]);
+
+      if (insertError) throw insertError;
+
+      alert('Prenotazione effettuata con successo!');
+      setUserName(''); // Resetta il campo nome
+
+      // Aggiorna lo stato con le nuove prenotazioni
+      await refreshPrenotazioni(formattedDate);
+
+      // Forza il re-render del calendario cambiando data e ripristinandola subito dopo
+      const nextDay = new Date(selectedDate);
+      nextDay.setDate(selectedDate.getDate() + 1);
+      onDateChange(nextDay);  // cambia temporaneamente la data
+      setTimeout(() => onDateChange(selectedDate), 50);  // torna alla data originale
+
+    } catch (error) {
+      console.error('Errore durante la prenotazione:', error);
+      alert(`Errore: ${error.message}`);
+    }
+  };
+
+  const handleAnnullaPrenotazione = async (idPrenotazione) => {
+    try {
+      console.log('ID da cancellare:', idPrenotazione, 'Tipo:', typeof idPrenotazione);
+      
+      // Converti esplicitamente a numero se necessario
+      const idNumerico = Number(idPrenotazione);
+      
+      const { data, error } = await supabase
+        .from('prenotazioni')
+        .delete()
+        .eq('id', idNumerico)
+        .select();
+      
+      console.log('Risposta cancellazione:', { data, error });
+  
+      if (error) throw error;
+      
+      if (data && data.length > 0) {
+        console.log('Record cancellato:', data[0]);
+        alert('Prenotazione cancellata con successo!');
+        // Aggiorna lo stato
+        await refreshPrenotazioni(selectedDate.toLocaleDateString('sv-SE'));
+      } else {
+        console.log('Nessun record trovato con questo ID');
+        alert('Nessuna prenotazione trovata con questo ID');
+      }
+    } catch (error) {
+      console.error('Errore cancellazione:', error);
+      alert(`Errore: ${error.message}`);
+    }
+  };
+
+  const tileClassName = ({ date, view }) => {
+    if (view !== 'month') return '';
+   
+    const formattedDate = date.toLocaleDateString('sv-SE');
+    const hasPrenotazioni = prenotazioni.some(p => p.data === formattedDate);
+    
+    return hasPrenotazioni ? 'occupied-day' : 'free-day';
+  };
+
+  const tileContent = ({ date, view }) => {
+    if (view !== 'month') return null;
+    
+    const formattedDate = date.toLocaleDateString('sv-SE');
+    const prenotazioniGiorno = prenotazioni.filter(p => {
+      console.log('DB date:', p.data, 'Selected date:', formattedDate);
+      console.log('DB time:', p.orario, 'vs expected:', orari);
+      return p.data === formattedDate;
+    });
+
+    console.log('Prenotazioni per', formattedDate, ':', prenotazioniGiorno);
+    
+    // Crea i puntini per le ore del mattino (6 puntini)
+    const morningDots = Array(6).fill(null).map((_, index) => {
+      const ora = orari[index]; // 08:00 - 13:00
+      const isOccupato = prenotazioniGiorno.some(p => {
+        const dbTime = p.orario?.startsWith(ora) || p.orario?.includes(ora);
+        console.log(`Ora ${ora}: DB has ${p.orario} -> ${dbTime ? 'OCCUPATO' : 'libero'}`);
+        return dbTime;
+      });
+      
+      return (
+        <div
+          key={`morning-${index}`}
+          style={{
+            width: '6px',
+            height: '6px',
+            borderRadius: '50%',
+            backgroundColor: isOccupato ? '#ff0000' : '#16a34a',
+            margin: '1px',
+            border: '1px solid white'
+          }}
+          title={`${ora}: ${isOccupato ? 'Occupato' : 'Libero'}`}
+        />
+      );
+    });
+
+    // Crea i puntini per le ore del pomeriggio (4 puntini)
+    const afternoonDots = Array(4).fill(null).map((_, index) => {
+      const ora = orari[index + 6]; // 14:00 - 17:00
+      const isOccupato = prenotazioniGiorno.some(p => {
+        const dbTime = p.orario?.startsWith(ora) || p.orario?.includes(ora);
+        console.log(`Ora ${ora}: DB has ${p.orario} -> ${dbTime ? 'OCCUPATO' : 'libero'}`);
+        return dbTime;
+      });
+      
+      return (
+        <div
+          key={`afternoon-${index}`}
+          style={{
+            width: '6px',
+            height: '6px',
+            borderRadius: '50%',
+            backgroundColor: isOccupato ? '#ff0000' : '#16a34a',
+            margin: '1px',
+            border: '1px solid white'
+          }}
+          title={`${ora}: ${isOccupato ? 'Occupato' : 'Libero'}`}
+        />
+      );
+    });
+
+    return (
+      <div style={{
+        position: 'absolute',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '3px',
+        width: '40px',
+        zIndex: 1,
+        alignItems: 'center',
+        pointerEvents: 'none'
+      }}>
+        {/* Puntini del mattino sopra il numero */}
+        <div style={{ 
+          display: 'flex', 
+          gap: '1px',
+          marginTop: '-45px',
+          justifyContent: 'center'
+        }}>
+          {morningDots}
+        </div>
+        {/* Puntini del pomeriggio sotto il numero */}
+        <div style={{ 
+          display: 'flex', 
+          gap: '1px',
+          marginTop: '45px',
+          justifyContent: 'center'
+        }}>
+          {afternoonDots}
+        </div>
+      </div>
+    );
+  };
+
+  // Aggiorna selectedAula quando cambia selectedRoom
+  useEffect(() => {
+    if (selectedRoom) {
+      const aula = aule.find(a => a.nome === selectedRoom);
+      if (aula) {
+        setSelectedAula(aula.id);
+        setSelectedAulaView(aula.id);
+      }
+    }
+  }, [selectedRoom, aule]);
+
+  // Funzione per gestire il click su un'aula
+  const handleAulaClick = (aula) => {
+    setSelectedAula(aula.id);
+    setSelectedAulaView(aula.id);
+    if (onRoomClick) {
+      onRoomClick(aula.nome);
+    }
+  };
+
+  const handleRoomClick = async (roomName) => {
+    try {
+      setLoadingPrenotazioni(true);
+      const roomId = aule.find(a => a.nome === roomName)?.id;
+      if (!roomId) return;
+
+      const { data: bookings, error } = await supabase
+        .from('prenotazioni')
+        .select('*')
+        .eq('id_aula', roomId)
+        .order('data', { ascending: true });
+
+      if (error) throw error;
+
+      setSelectedRoomState(roomName);
+      setRoomBookings({
+        [roomName]: bookings
+      });
+      
+      if (onRoomClick) {
+        onRoomClick(roomName);
+      }
+    } catch (error) {
+      console.error('Errore nel recupero delle prenotazioni:', error);
+    } finally {
+      setLoadingPrenotazioni(false);
+    }
+  };
+
+  return (
+    <div className="max-w-[3000px] mx-auto">
+      <h2 className="text-xl font-semibold text-gray-800 mb-6">
+        {type === 'calendar' ? '📅 Calendario Prenotazioni' : 
+         type === 'form' ? '➕ Nuova Prenotazione' : 
+         type === 'detail' ? '📊 Riepilogo Prenotazioni Per Aula' :
+         '🏫 Prenotazioni Aule'}
+      </h2>
+      
+      {loadingAule ? (
+        <div className="flex justify-center items-center h-40">
+          <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-blue-500"></div>
+        </div>
+      ) : (
+        <div className="space-y-6">
+
+          {type === 'calendar' && (
+            <div className="bg-white rounded-xl border-2 border-gray-300 shadow-sm h-[464px]">
+              <div className="p-4 h-full">
+                <style jsx global>{`
+                  .react-calendar {
+                    width: 100%;
+                    max-width: 1000px;
+                    border: 1px solid #3b82f6 !important;
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                  }
+
+                  .react-calendar__navigation__label {
+                    font-size: 1.2rem !important;
+                    font-weight: 700 !important;
+                    color: #1e40af !important;
+                    padding: 0.15rem 1rem !important;
+                    background-color: #f1f5ff !important;
+                    border-radius: 0.5rem !important;
+                    margin: 0.15rem 0 !important;
+                    display: flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    min-height: 2rem !important;
+                    line-height: 1 !important;
+                  }
+
+                  .react-calendar__navigation__label__labelText {
+                    text-transform: capitalize !important;
+                    display: flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    height: 100% !important;
+                  }
+
+                  .react-calendar__navigation__arrow {
+                    font-size: 1.5rem !important;
+                    color: #1e40af !important;
+                    padding: 0.35rem !important;
+                    min-width: 2rem !important;
+                    min-height: 2rem !important;
+                    display: flex !important;
+                    align-items: center !important;
+                    justify-content: center !important;
+                    border-radius: 0.5rem !important;
+                    margin: 0.15rem 0 !important;
+                  }
+
+                  .react-calendar__navigation__arrow:hover {
+                    color: #2563eb !important;
+                    transform: scale(1.1) !important;
+                    transition: all 0.2s ease !important;
+                  }
+
+                  .react-calendar__navigation__arrow:disabled {
+                    opacity: 0.5 !important;
+                    cursor: not-allowed !important;
+                  }
+
+                  .react-calendar__tile {
+                    position: relative !important;
+                    height: 70px !important;
+                    padding-top: 8px !important;
+                    margin: 0 !important;
+                  }
+
+                  .react-calendar__month-view__days__day {
+                    border: 1px solid #3b82f6 !important;
+                  }
+
+                  .react-calendar__month-view__days__day--neighboringMonth {
+                    opacity: 0.5 !important;
+                  }
+
+                  /* Stile per giorni occupati */
+                  .occupied-day {
+                    background-color: #fee2e2 !important;
+                  }
+
+                  /* Stile per giorni liberi */
+                  .free-day {
+                    background-color: white !important;
+                  }
+
+                  /* Stile base per i numeri del calendario */
+                  .react-calendar__tile abbr {
+                    color: #000000 !important;
+                    font-size: 1.25rem !important;
+                    font-weight: 500 !important;
+                    text-decoration: none !important;
+                    display: inline-block !important;
+                    padding: 4px !important;
+                    text-align: center !important;
+                  }
+
+                  /* Stile per il giorno corrente */
+                  .react-calendar__tile--now abbr {
+                    background-color: #e9d5ff !important;
+                    color: #000000 !important;
+                    border-radius: 50% !important;
+                    width: 32px !important;
+                    height: 32px !important;
+                    line-height: 24px !important;
+                    font-weight: 500 !important;
+                  }
+
+                  /* Stile per il giorno selezionato */
+                  .react-calendar__tile--active abbr {
+                    background-color: #2563eb !important;
+                    color: white !important;
+                    border-radius: 50% !important;
+                    width: 32px !important;
+                    height: 32px !important;
+                    line-height: 24px !important;
+                  }
+
+                  /* Rimuovi i bordi esterni del calendario */
+                  .react-calendar__month-view {
+                    border: none !important;
+                  }
+
+                  /* Rimuovi i bordi tra le righe */
+                  .react-calendar__month-view__days__day {
+                    border-right: 1px solid #3b82f6 !important;
+                    border-bottom: 1px solid #3b82f6 !important;
+                  }
+
+                  /* Rimuovi il bordo destro dell'ultima colonna */
+                  .react-calendar__month-view__days__day:nth-child(7n) {
+                    border-right: none !important;
+                  }
+
+                  /* Rimuovi il bordo inferiore dell'ultima riga */
+                  .react-calendar__month-view__days__day:nth-last-child(-n+7) {
+                    border-bottom: none !important;
+                  }
+
+                  /* Stile per i giorni della settimana */
+                  .react-calendar__month-view__weekdays {
+                    margin-top: 0 !important;
+                  }
+
+                  .react-calendar__month-view__weekdays__weekday {
+                    text-decoration: none !important;
+                    font-weight: 700 !important;
+                    padding: 6px 0 !important;
+                    background-color: #f3e8ff !important;
+                    border-bottom: 2px solid #3b82f6 !important;
+                  }
+
+                  .react-calendar__month-view__weekdays__weekday abbr {
+                    text-decoration: none !important;
+                    border-bottom: none !important;
+                    font-size: 0.9rem !important;
+                    font-weight: 700 !important;
+                    color: #1e40af !important;
+                    text-transform: uppercase !important;
+                    letter-spacing: 0.5px !important;
+                  }
+
+                  .react-calendar__navigation {
+                    margin-bottom: 0 !important;
+                  }
+                `}</style>
+                <Calendar
+                  onChange={onDateChange}
+                  value={selectedDate}
+                  tileClassName={tileClassName}
+                  tileContent={tileContent}
+                  className="w-full border-0"
+                  locale="it-IT"
+                  prev2Label={null}
+                  next2Label={null}
+                />
+              </div>
+            </div>
+          )}
+
+          {type === 'form' && (
+            <div className="bg-gray-50 p-5 rounded-xl border-2 border-gray-300 h-[200px]">
+              <div className="space-y-1">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                  <div className="md:col-span-8">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">🏢 Aula</label>
+                    <select 
+                      value={selectedAula || ''} 
+                      onChange={(e) => setSelectedAula(e.target.value)} 
+                      className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Aula...</option>
+                      {aule.map((aula) => (
+                        <option key={aula.id} value={aula.id}>{aula.nome}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div className="md:col-span-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">🕒 Orario</label>
+                    <select 
+                      value={selectedTime} 
+                      onChange={(e) => setSelectedTime(e.target.value)} 
+                      className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      {orari.map((orario, index) => {
+                        const nextHour = index < orari.length - 1 ? orari[index + 1] : '18:15';
+                        return (
+                          <option key={orario} value={orario}>
+                            {orario} - {nextHour}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                  
+                  <div className="md:col-span-12 grid grid-cols-1 md:grid-cols-12 gap-4">
+                    <div className="md:col-span-8">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">👤 Nome Utente</label>
+                      <select 
+                        value={userName} 
+                        onChange={(e) => setUserName(e.target.value)} 
+                        className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        <option value="">Utente...</option>
+                        <option value="Usai Guglielmo">Usai Guglielmo</option>
+                        <option value="Roggio AnnaMaria">Roggio AnnaMaria</option>
+                        <option value="Palma Alessio">Palma Alessio</option>
+                        <option value="Multazzu Salvatore">Multazzu Salvatore</option>
+                        <option value="Gianino Sara">Gianino Sara</option>
+                        <option value="Cherchi Marcello">Cherchi Marcello</option>
+                      </select>
+                    </div>
+                    
+                    <div className="md:col-span-4 flex items-end">
+                      <button 
+                        onClick={handlePrenotazione}
+                        disabled={!selectedAula || !userName}
+                        className={`w-full py-2.5 px-4 rounded-lg font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 ${
+                          !selectedAula || !userName 
+                            ? 'bg-gray-300 text-gray-500 cursor-not-allowed' 
+                            : 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-500'
+                        }`}
+                      >
+                        Conferma
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {type === 'list' && (
+            <div className="bg-white rounded-xl border-2 border-gray-300 shadow-sm h-[464px] p-4">
+              {loadingPrenotazioni ? (
+                <div className="flex justify-center items-center h-40">
+                  <div className="animate-spin rounded-full h-10 w-10 border-t-2 border-b-2 border-blue-500"></div>
+                </div>
+              ) : (
+                <>
+                  
+                  
+                  {/* Pulsanti per selezionare l'aula */}
+                  <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-1.5">
+                    {aule.map((aula) => (
+                      <button
+                        key={aula.id}
+                        onClick={() => handleAulaClick(aula)}
+                        className={`p-1.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap ${
+                          selectedAula === aula.id
+                            ? 'bg-blue-500 text-white'
+                            : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                        }`}
+                      >
+                        {aula.nome}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Lista delle aule filtrata */}
+                  <div className="grid grid-cols-1 gap-4">
+                    {aule
+                      .filter(aula => aula.id === selectedAulaView)
+                      .map((aula) => {
+                        const prenotazioniAula = prenotazioni.filter(p => p.id_aula === aula.id);
+                        
+                        const prenotazioniOrari = orari.map(orario => {
+                          const pren = prenotazioniAula.find(p => p.orario?.slice(0,5) === orario);
+                          return { orario, prenotazione: pren };
+                        });
+
+                        const numPrenotate = prenotazioniOrari.filter(p => p.prenotazione).length;
+                        const hasPrenotazioni = numPrenotate > 0;
+
+                        return (
+                          <div key={aula.id} className="bg-white rounded-xl p-5">
+                            <div className="flex justify-between items-center mb-3">
+                              <h3 className="font-semibold text-lg text-gray-800 flex items-center">
+                                <span className="bg-blue-100 text-blue-800 p-2 rounded-lg mr-3">
+                                  {aula.nome}
+                                </span>
+                              </h3>
+                              <span className={`px-3 py-1 rounded-full text-xs font-medium ${
+                                hasPrenotazioni ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
+                              }`}>
+                                {hasPrenotazioni ? `${numPrenotate}/${orari.length} prenotate` : 'Disponibile'}
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-3 gap-y-px min-h-[320px] -mb-2">
+                              {prenotazioniOrari.map(({ orario, prenotazione }) => {
+                                const isOccupato = !!prenotazione;
+
+                                return (
+                                  <div
+                                    key={orario}
+                                    className={`p-2 rounded-md text-sm h-[56px] flex flex-col justify-between mb-px ${
+                                      isOccupato 
+                                        ? 'bg-red-500 border border-red-600 text-white hover:bg-red-600' 
+                                        : 'bg-green-100 border border-green-200 text-green-800 hover:bg-green-200'
+                                    } transition-colors duration-200`}
+                                  >
+                                    <div className="font-medium">{orario}</div>
+                                    <div className="text-xs flex items-center justify-between">
+                                      {isOccupato ? (
+                                        <>
+                                          <span className="font-medium text-white">Prenotato da: {prenotazione.nome_utente}</span>
+                                          <button
+                                            onClick={() => handleAnnullaPrenotazione(prenotazione.id)}
+                                            className={`ml-2 text-xs ${
+                                              'text-white hover:text-gray-200'
+                                            }`}
+                                          >
+                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                                            </svg>
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <span className="text-green-600">Disponibile</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {type === 'detail' && (
+            <div className="bg-white rounded-xl border-2 border-gray-300 shadow-sm h-[200px] p-4">
+              <div className="space-y-2 h-full overflow-y-auto pr-2">
+                {aule.length > 0 ? (
+                  aule.map((aula) => (
+                    <div key={aula.id}>
+                      <button
+                        onClick={() => handleRoomClick(aula.nome)}
+                        className={`w-full text-left p-2 rounded transition-colors ${
+                          selectedRoomState === aula.nome ? 'bg-blue-100' : 'hover:bg-blue-100'
+                        }`}
+                      >
+                        <div className="font-medium text-blue-600">{aula.nome}</div>
+                        <div className="text-sm text-gray-600">
+                          {prenotazioniPerAula[aula.id]?.length || 0} prenotazioni
+                        </div>
+                      </button>
+                      {selectedRoomState === aula.nome && roomBookings[aula.nome] && (
+                        <RoomSummary 
+                          roomName={aula.nome} 
+                          bookings={roomBookings[aula.nome]} 
+                          onClose={() => {
+                            setSelectedRoomState(null);
+                            setRoomBookings({});
+                          }}
+                        />
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-gray-500 text-center">Nessuna aula disponibile</div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default AulePrenotazione;
+
+
